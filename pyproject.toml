@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "algoviz-tui"
+version = "0.1.0a0"
+description = "Algorithm visualization library: TUI realtime + GIF export + SVG static."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Marco (Ke Linsi)" }
+]
+keywords = ["algorithm", "visualization", "TUI", "SVG", "GIF", "education"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Education",
+  "Topic :: Multimedia :: Graphics",
+]
+
+dependencies = [
+  # 核心依赖先最小化；后续里程碑按需扩展
+  "rich>=13.7",
+  "svgwrite>=1.4",
+  "imageio>=2.34",
+  "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6.0",
+  "black>=24.0",
+  "mypy>=1.10.0",
+]
+docs = [
+  "mkdocs>=1.6.0",
+  "mkdocs-material>=9.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourname/algoviz-tui"
+Repository = "https://github.com/yourname/algoviz-tui"
+Issues = "https://github.com/yourname/algoviz-tui/issues"
+
+# Hatch 打包（明确 src 布局的包路径）
+[tool.hatch.build.targets.wheel]
+packages = ["src/algoviz"]
+
+# ---- 质量工具配置 ----
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# 仅示例：启用基础规则（Pyflakes/pycodestyle），并可按需扩展
+select = ["E", "F"]
+ignore = []
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+pretty = true
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
