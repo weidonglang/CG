@@ -1,145 +1,190 @@
 from __future__ import annotations
-from dataclasses import dataclass, replace
-from typing import Any, Dict, List, Optional, Tuple
-from ..core.drawops import Rect, Text, DrawList
-from ..core.scene import Actor
 
-DEFAULT_FILL = "#5B8FF9"
-HIGHLIGHT_FILL = "#F6BD16"
-COMPARE_FILL = "#E8684A"
-SORTED_FILL = "#49AA19"
-LABEL_COLOR = "#333333"
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Tuple, Any
+
+from ..core.drawops import Rect, Text
+
+# ===== 主题色 =====
+DEFAULT_FILL = "#4C97FF"
+HIGHLIGHT_FILL = "#FFB800"
+COMPARE_FILL = "#FF5A5A"
+SORTED_FILL = "#33C48E"
+LABEL_COLOR = "#222"
+
 
 @dataclass
 class ArrayBarState:
-    data: List[float]               # 固定值数组（item 索引 -> 值）
-    order: List[int]                # 槽位 -> item 索引（可交换）
-    highlight: set[int]             # 被高亮的槽位集合
-    compare: Optional[Tuple[int,int]]  # 当前对比的 (i, j)，仅在 compare 事件帧有效
-    sorted_upto: int                # 已排序前缀的最大槽位（包含）；-1 表示无
+    values: List[float]
+    # 槽位 -> 初始索引 的顺序映射，swap 后持久更新
+    order: List[int]
+    sorted_upto: int = -1
+    highlight: Set[int] = field(default_factory=set)
+    compare: Optional[Tuple[int, int]] = None
+    # 子步插值期间的像素位移（按槽位）
+    offsets: Dict[int, float] = field(default_factory=dict)
 
-class ArrayBar(Actor):
-    def __init__(self, data: List[float], name: str = "A",
-                 x: float = 10, y: float = 10,
-                 bar_width: float = 18, bar_gap: float = 6, height: float = 120) -> None:
+    # 兼容 tests: s.data[item] 读取数值（映射到 values）
+    @property
+    def data(self) -> List[float]:
+        return self.values
+
+
+def _copy_state(st: ArrayBarState) -> ArrayBarState:
+    return ArrayBarState(
+        values=list(st.values),
+        order=list(st.order),
+        sorted_upto=st.sorted_upto,
+        highlight=set(st.highlight),
+        compare=None if st.compare is None else (st.compare[0], st.compare[1]),
+        offsets=dict(st.offsets),
+    )
+
+
+class ArrayBar:
+    """
+    柱状数组组件：
+      - swap/assign 子步只改 offsets，finalize 落位
+      - 颜色优先级：已排序 > compare > highlight > 默认
+      - order: 槽位 → 初始索引，swap 后需持久更新
+    """
+
+    def __init__(
+        self,
+        values: List[float],
+        name: str,
+        x: int = 6,
+        y: int = 10,
+        bar_width: int = 10,
+        bar_gap: int = 4,
+        height: int = 60,
+        show_value: bool = True,
+    ) -> None:
         self.name = name
-        self._data = list(float(v) for v in data)
-        self.x = x
-        self.y = y
-        self.bar_width = bar_width
-        self.bar_gap = bar_gap
-        self.height = height
+        self.x = int(x)
+        self.y = int(y)
+        self.bar_width = int(bar_width)
+        self.bar_gap = int(bar_gap)
+        self.height = int(height)
+        self.show_value = show_value
 
-    # ---------- Actor 接口 ----------
+        n = len(values)
+        self._init_state = ArrayBarState(values=list(values), order=list(range(n)))
+
+    # ==== 场景接口 ====
     def initial_state(self) -> ArrayBarState:
-        n = len(self._data)
-        return ArrayBarState(
-            data=list(self._data),
-            order=list(range(n)),
-            highlight=set(),
-            compare=None,
-            sorted_upto=-1,
-        )
+        return _copy_state(self._init_state)
 
-    def draw(self, state: ArrayBarState) -> DrawList:
-        ops: DrawList = []
-        n = len(state.order)
-        vmax = max(state.data) if state.data else 1.0
+    def _slot_x(self, slot: int) -> int:
+        return self.x + (self.bar_width + self.bar_gap) * slot
 
-        for slot in range(n):
-            item = state.order[slot]
-            val = state.data[item]
-            h = 0 if vmax <= 0 else (val / vmax) * self.height
-            x = self.x + slot * (self.bar_width + self.bar_gap)
-            y = self.y + (self.height - h)
+    def draw(self, st: ArrayBarState) -> List[Any]:
+        ops: List[Any] = []
+        n = len(st.values)
+        vmax = max(st.values) if n else 1.0
+        vmax = 1.0 if vmax <= 0 else float(vmax)
 
-            # 颜色优先级：已排序 > compare > highlight > 默认
+        for i, v in enumerate(st.values):
+            x_base = self._slot_x(i)
+            x = x_base + st.offsets.get(i, 0.0)
+
+            h = max(1, int(round((float(v) / vmax) * self.height)))
+            y_top = self.y + (self.height - h)
+
+            # 颜色优先级：最后覆盖者最高
             fill = DEFAULT_FILL
-            if state.sorted_upto >= 0 and slot <= state.sorted_upto:
-                fill = SORTED_FILL
-            if state.compare and slot in state.compare:
-                fill = COMPARE_FILL
-            elif slot in state.highlight:
+            if i in st.highlight:
                 fill = HIGHLIGHT_FILL
+            if st.compare and i in st.compare:
+                fill = COMPARE_FILL
+            if st.sorted_upto >= 0 and i <= st.sorted_upto:
+                fill = SORTED_FILL
 
-            ops.append(Rect(x, y, self.bar_width, h, fill=fill, stroke=None, label=f"{val:g}"))
-            # 在柱顶上方放一个数值标签
-            ops.append(Text(x + self.bar_width * 0.5, y - 6, f"{val:g}", size=11, weight="bold", fill=LABEL_COLOR))
+            ops.append(Rect(x=x, y=y_top, w=self.bar_width, h=h, fill=fill, stroke=None))
+            if self.show_value:
+                ops.append(Text(content=str(v), x=x + self.bar_width / 2, y=y_top - 12,
+                                size=10, weight="normal", fill=LABEL_COLOR))
         return ops
 
-    def apply_event(self, state: ArrayBarState, event_type: str, payload: Dict[str, Any], duration: int):
-        # 深拷贝帮助函数（仅浅层可变容器）
-        def clone(s: ArrayBarState) -> ArrayBarState:
-            return ArrayBarState(
-                data=list(s.data),
-                order=list(s.order),
-                highlight=set(s.highlight),
-                compare=None if s.compare is None else (s.compare[0], s.compare[1]),
-                sorted_upto=s.sorted_upto,
-            )
-
-        frames: List[ArrayBarState] = []
-        current = clone(state)
-
-        if event_type == "compare":
+    # ==== 旧离散版（兼容）====
+    def apply_event(self, st: ArrayBarState, etype: str, payload: dict) -> ArrayBarState:
+        ns = _copy_state(st)
+        if etype == "highlight":
+            if "idx" in payload:
+                ns.highlight = {int(payload["idx"])}
+            elif "start" in payload and "end" in payload:
+                a, b = int(payload["start"]), int(payload["end"])
+                ns.highlight = set(range(min(a, b), max(a, b) + 1))
+        elif etype == "compare":
+            ns.compare = (int(payload["i"]), int(payload["j"]))
+        elif etype == "swap":
             i, j = int(payload["i"]), int(payload["j"])
-            for _ in range(duration):
-                step = clone(current)
-                step.compare = (i, j)
-                frames.append(step)
-            # compare 仅在该事件帧有效，事件结束后清空 compare
-            persist = clone(current)
-            persist.compare = None
-            return frames, persist
-
-        if event_type == "highlight":
-            idx = payload.get("idx")
-            start = payload.get("start")
-            end = payload.get("end")
-            clear = bool(payload.get("clear", False))
-
-            next_state = clone(current)
-            if clear:
-                next_state.highlight.clear()
-            if idx is not None:
-                next_state.highlight.add(int(idx))
-            if start is not None and end is not None:
-                for k in range(int(start), int(end) + 1):
-                    next_state.highlight.add(k)
-
-            # 持续 1 帧（或 duration 帧相同）
-            for _ in range(duration):
-                frames.append(clone(next_state))
-            return frames, next_state
-
-        if event_type == "mark_sorted":
-            upto = int(payload["upto"])
-            next_state = clone(current)
-            next_state.sorted_upto = max(next_state.sorted_upto, upto)
-            for _ in range(duration):
-                frames.append(clone(next_state))
-            return frames, next_state
-
-        if event_type == "assign":
+            ns.values[i], ns.values[j] = ns.values[j], ns.values[i]
+            ns.order[i], ns.order[j] = ns.order[j], ns.order[i]
+        elif etype == "assign":
             i = int(payload["i"])
-            value = float(payload["value"])
-            # 修改 data（值），不改变顺序
-            next_state = clone(current)
-            item = next_state.order[i]
-            next_state.data[item] = value
-            for _ in range(duration):
-                frames.append(clone(next_state))
-            return frames, next_state
+            if "value" in payload:
+                ns.values[i] = payload["value"]
+            else:
+                j = int(payload["j"])
+                ns.values[i] = ns.values[j]
+        elif etype == "mark_sorted":
+            ns.sorted_upto = max(ns.sorted_upto, int(payload["upto"]))
+        return ns
 
-        if event_type == "swap":
+    # ==== 子步插值版（M5）====
+    def apply_event_step(self, st: ArrayBarState, etype: str, payload: dict, t: float) -> ArrayBarState:
+        """
+        t 已是缓动后的 0..1。为满足“单调逼近目标”的测试，这里采用 (1 - t) 作为剩余距离权重。
+        """
+        ns = _copy_state(st)
+        rem = 1.0 - float(t)  # 关键：剩余比例，随帧推进单调下降
+
+        if etype == "swap":
             i, j = int(payload["i"]), int(payload["j"])
-            next_state = clone(current)
-            if i < 0 or j < 0 or i >= len(next_state.order) or j >= len(next_state.order):
-                raise IndexError("swap index out of range")
-            # M1：离散交换（动画插值将于后续里程碑加入）
-            next_state.order[i], next_state.order[j] = next_state.order[j], next_state.order[i]
-            for _ in range(duration):
-                frames.append(clone(next_state))
-            return frames, next_state
+            xi, xj = self._slot_x(i), self._slot_x(j)
+            # 偏移量单调递减至 0（末帧 offsets 清空，finalize 后落位）
+            ns.offsets[i] = (xj - xi) * rem
+            ns.offsets[j] = (xi - xj) * rem
 
-        raise KeyError(f"Unknown event type: {event_type}")
+        elif etype == "assign":
+            i = int(payload["i"])
+            # 常量赋值无需插值；若为 j->i 的“视觉拷贝”，让源 j 朝着 i 的槽位靠近
+            if "j" in payload and "value" not in payload:
+                j = int(payload["j"])
+                xi, xj = self._slot_x(i), self._slot_x(j)
+                ns.offsets[j] = (xi - xj) * rem
+
+        elif etype == "highlight":
+            if "idx" in payload:
+                ns.highlight = {int(payload["idx"])}
+            elif "start" in payload and "end" in payload:
+                a, b = int(payload["start"]), int(payload["end"])
+                ns.highlight = set(range(min(a, b), max(a, b) + 1))
+
+        elif etype == "compare":
+            ns.compare = (int(payload["i"]), int(payload["j"]))
+
+        elif etype == "mark_sorted":
+            ns.sorted_upto = max(ns.sorted_upto, int(payload["upto"]))
+
+        return ns
+
+    def finalize_event(self, st: ArrayBarState, etype: str, payload: dict) -> ArrayBarState:
+        ns = _copy_state(st)
+        if etype == "swap":
+            i, j = int(payload["i"]), int(payload["j"])
+            ns.values[i], ns.values[j] = ns.values[j], ns.values[i]
+            ns.order[i], ns.order[j] = ns.order[j], ns.order[i]
+        elif etype == "assign":
+            i = int(payload["i"])
+            if "value" in payload:
+                ns.values[i] = payload["value"]
+            else:
+                j = int(payload["j"])
+                ns.values[i] = ns.values[j]
+        elif etype == "compare":
+            # compare 为瞬时：事件结束后清空
+            ns.compare = None
+        ns.offsets.clear()
+        return ns

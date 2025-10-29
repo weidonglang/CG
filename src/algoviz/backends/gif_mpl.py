@@ -1,111 +1,97 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Tuple, Optional
+from typing import List, Optional, Sequence, Tuple
+
+# —— 关键：在导入 pyplot 之前强制使用 Agg（无 GUI 后端）——
+# 官方文档：可通过 matplotlib.use() / MPLBACKEND / rcParams 设后端；Agg 是非交互后端，适合脚本/CI。:contentReference[oaicite:2]{index=2}
+import matplotlib
+matplotlib.use("Agg")
+
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import imageio.v3 as iio
-from PIL import Image  # 仅测试/调试时可能用到
-
-from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-from ..core.scene import Scene
-from ..core.timeline import Timeline, Frame
-from ..core.drawops import DrawOp, Rect, Line, Text as TextOp
-
-
 
 
 @dataclass
 class GifOptions:
     size: Tuple[int, int] = (640, 360)
-    fps: int = 20                    # 仍保留，作为基准换算
+    fps: int = 20
     palettesize: int = 256
     loop: int = 0
     subrectangles: bool = True
     facecolor: str = "white"
-    # 新增：
-    min_frame_ms: Optional[int] = 100        # 建议默认 100ms，更稳
-    per_frame_ms: Optional[List[int]] = None # 若给出，优先生效
-    repeat_each: int = 1                     # 每帧重复次数（>=1）
+    min_frame_ms: Optional[int] = 100
+    per_frame_ms: Optional[List[int]] = None
+    repeat_each: int = 1
 
-def _draw_ops_to_ndarray(scene: Scene, ops: List[DrawOp], size_px: Tuple[int, int]) -> np.ndarray:
-    """将一帧 DrawOps 渲染为 RGBA ndarray（H,W,4）。"""
-    w_px, h_px = size_px
-    # 用 Figure + Agg 后端，强制像素尺寸
+
+def _render_frame(scene, frame, size: Tuple[int, int], facecolor: str = "white") -> np.ndarray:
+    W, H = size
     dpi = 100
-    fig = Figure(figsize=(w_px / dpi, h_px / dpi), dpi=dpi, facecolor="white")
-    canvas = FigureCanvasAgg(fig)
-    ax = fig.add_axes([0, 0, 1, 1])  # 全屏铺满
+    fig = plt.figure(figsize=(W / dpi, H / dpi), dpi=dpi)
+    ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, scene.width)
-    # 重要：反转 y 轴以匹配我们“y 向下”的场景坐标
-    ax.set_ylim(scene.height, 0)
-    ax.set_aspect("auto")
-    ax.axis("off")
+    ax.set_ylim(scene.height, 0)  # y 向下
+    ax.set_axis_off()
+    fig.patch.set_facecolor(facecolor)
+    ax.set_facecolor(facecolor)
 
+    ops = scene.render(frame.states)
     for op in ops:
-        if isinstance(op, Rect):
-            ax.add_patch(Rectangle((op.x, op.y), op.w, op.h, linewidth=0,
-                                   facecolor=op.fill if op.fill else "#000000"))
-        elif isinstance(op, Line):
-            (x1, y1), (x2, y2) = op.p1, op.p2
-            ax.plot([x1, x2], [y1, y2], linewidth=max(1.0, op.width), color=op.stroke)
-        elif isinstance(op, TextOp):
-            # 粗体映射；fontsize 用 px 粗略映射
-            ax.text(op.x, op.y, op.content, ha="center", va="bottom",
-                    fontsize=op.size, fontweight=("bold" if op.weight == "bold" else "normal"),
-                    color=op.fill)
+        # Rect
+        if hasattr(op, "w") and hasattr(op, "h") and hasattr(op, "x") and hasattr(op, "y"):
+            ec = getattr(op, "stroke", None)
+            fc = getattr(op, "fill", None) or "#000"
+            ax.add_patch(
+                mpatches.Rectangle((op.x, op.y), op.w, op.h, linewidth=0 if ec is None else 1, edgecolor=ec, facecolor=fc)
+            )
+        # Text
+        if hasattr(op, "content") and hasattr(op, "size") and hasattr(op, "x") and hasattr(op, "y"):
+            color = getattr(op, "fill", "#000")
+            weight = getattr(op, "weight", "normal")
+            ax.text(op.x, op.y, op.content, fontsize=op.size, color=color, fontweight=weight,
+                    ha="center", va="bottom")
 
-    # 渲染到 RGBA 缓冲区
-    canvas.draw()
-    buf = canvas.buffer_rgba()
-    arr = np.asarray(buf)  # (H, W, 4) uint8
-    return arr.copy()      # 拷贝以防后续 GC/复用问题
+    fig.canvas.draw()
+    buf = np.asarray(fig.canvas.buffer_rgba(), dtype=np.uint8)
+    plt.close(fig)
+    return buf
 
 
-def frames_to_arrays(scene: Scene, frames: Iterable[Frame], size_px: Tuple[int, int]) -> List[np.ndarray]:
-    images: List[np.ndarray] = []
-    for fr in frames:
-        ops = scene.render(fr.states)
-        img = _draw_ops_to_ndarray(scene, ops, size_px)
-        images.append(img)
-    return images
+def _frames_to_arrays(scene, frames: Sequence, size: Tuple[int, int]) -> List[np.ndarray]:
+    return [_render_frame(scene, f, size) for f in frames]
 
 
 def export_gif(scene, timeline, outfile: str, *, options: GifOptions | None = None) -> None:
-    opts = options or GifOptions()
+    opt = options or GifOptions()
     frames = timeline.build_frames(scene)
     if not frames:
         raise ValueError("timeline has no frames")
 
-    imgs = frames_to_arrays(scene, frames, opts.size)
+    imgs = _frames_to_arrays(scene, frames, opt.size)
 
-    # --- 计算每帧时长（毫秒） ---
-    if opts.per_frame_ms is not None:
-        durations = list(opts.per_frame_ms)
+    # 每帧毫秒（Pillow 读回 info['duration'] 为 ms）
+    if opt.per_frame_ms is not None:
+        durations = list(opt.per_frame_ms)
         if len(durations) != len(imgs):
             raise ValueError("per_frame_ms length must equal number of frames")
     else:
-        # 基于 fps 的均匀时长
-        base_ms = max(1, int(round(1000.0 / max(1, opts.fps))))
-        # 套最小时延（应对浏览器/播放器的回退/钳制）
-        if opts.min_frame_ms:
-            base_ms = max(base_ms, int(opts.min_frame_ms))
+        base_ms = max(1, int(round(1000.0 / max(1, opt.fps))))
+        if opt.min_frame_ms:
+            base_ms = max(base_ms, int(opt.min_frame_ms))
         durations = [base_ms] * len(imgs)
 
-    # --- 按需重复每帧（进一步放慢且避免某些环境对 duration 的取整/钳制） ---
-    if opts.repeat_each > 1:
-        imgs = [img for img in imgs for _ in range(opts.repeat_each)]
-        durations = [d for d in durations for _ in range(opts.repeat_each)]
+    if opt.repeat_each > 1:
+        imgs = [img for img in imgs for _ in range(opt.repeat_each)]
+        durations = [d for d in durations for _ in range(opt.repeat_each)]
 
-    # imageio(pillow) 推荐显式给 duration（秒/列表）；我们给“毫秒列表”
-    iio.imwrite(
-        outfile,
-        imgs,
-        plugin="pillow",
-        duration=durations,            # 支持 list：逐帧毫秒
-        loop=opts.loop,
-        palettesize=opts.palettesize,
-        subrectangles=opts.subrectangles,
-    )
+    # 流式逐帧写入；GIF 内部以 1/100s 精度存储，但此处统一以 ms 传入，Pillow 读取时也是 ms。
+    with iio.imopen(outfile, "w", plugin="pillow") as writer:
+        for idx, (img, ms) in enumerate(zip(imgs, durations)):
+            if idx == 0:
+                writer.write(img, duration=ms, loop=opt.loop,
+                             palettesize=opt.palettesize, subrectangles=opt.subrectangles)
+            else:
+                writer.write(img, duration=ms)
