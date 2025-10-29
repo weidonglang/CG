@@ -84,3 +84,14 @@ class Timeline:
     @property
     def events(self) -> List[Event]:
         return list(self._events)
+
+
+    def scaled(self, factor: float) -> "Timeline":
+        """返回一个时长缩放后的副本（duration × factor，向上取整至少 1 帧）。"""
+        if factor <= 0:
+            raise ValueError("factor must be > 0")
+        ntl = Timeline(fps=self.fps)
+        for ev in self._events:
+            new_dur = max(1, int(round(ev.duration * factor)))
+            ntl.add(ev.actor, ev.etype, payload=dict(ev.payload), duration=new_dur, easing=ev.easing, note=ev.note)
+        return ntl
