@@ -6,9 +6,7 @@ from pathlib import Path
 
 from .core.scene import Scene
 from .core.timeline import Timeline
-from .backends import play_tui
 from .backends import play_tui, export_gif, GifOptions
-from .backends import play_tui, export_gif, GifOptions, export_svg, SvgOptions
 
 
 def _load_demo_from_file(path: str | Path) -> tuple[Scene, Timeline]:
@@ -29,7 +27,6 @@ def _load_demo_from_file(path: str | Path) -> tuple[Scene, Timeline]:
             raise TypeError("build() must return (Scene, Timeline)")
         return scene, tl
 
-    # 兼容：模块变量
     if hasattr(mod, "SCENE") and hasattr(mod, "TIMELINE"):
         scene = mod.SCENE
         tl = mod.TIMELINE
@@ -44,46 +41,42 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="algoviz", description="Algoviz-TUI CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    # ---- TUI ----
     p_tui = sub.add_parser("tui", help="Play timeline in TUI")
     p_tui.add_argument("demo", help="Python file that provides build() -> (Scene, Timeline)")
     p_tui.add_argument("--fps", type=int, default=20)
     p_tui.add_argument("--speed", type=float, default=1.0)
+    p_tui.add_argument(
+        "--duration-scale", type=float, default=1.0,
+        help="Scale all event durations (e.g., 1.5 makes animation slower)"
+    )
     p_tui.add_argument("--exit-after", type=float, default=None, help="Auto exit after N seconds (for CI)")
 
-    ns = parser.parse_args(argv)
-
-    if ns.cmd == "tui":
-        scene, tl = _load_demo_from_file(ns.demo)
-        play_tui(scene, tl, fps=ns.fps, speed=ns.speed, exit_after=ns.exit_after)
-        return 0
-
-    return 1
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="algoviz", description="Algoviz-TUI CLI")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p_tui = sub.add_parser("tui", help="Play timeline in TUI")
-    p_tui.add_argument("demo")
-    p_tui.add_argument("--fps", type=int, default=20)
-    p_tui.add_argument("--speed", type=float, default=1.0)
-    p_tui.add_argument("--duration-scale", type=float, default=1.0,
-                       help="Scale all event durations (e.g., 1.5 makes animation slower)")
-    p_tui.add_argument("--exit-after", type=float, default=None)
-
+    # ---- GIF ----
     p_gif = sub.add_parser("gif", help="Export timeline as GIF")
-    p_gif.add_argument("demo")
+    p_gif.add_argument("demo", help="Python file that provides build() -> (Scene, Timeline)")
     p_gif.add_argument("--outfile", type=str, required=True)
-    p_gif.add_argument("--size", type=str, default="640x360")
-    p_gif.add_argument("--fps", type=int, default=20)
-    p_gif.add_argument("--duration-scale", type=float, default=1.0)
+    p_gif.add_argument("--size", type=str, default="640x360", help="WxH in pixels, e.g., 640x360")
+    p_gif.add_argument("--fps", type=int, default=20, help="Base FPS; internally converted to per-frame duration")
+    p_gif.add_argument(
+        "--duration-scale", type=float, default=1.0,
+        help="Scale all event durations before rendering frames"
+    )
     p_gif.add_argument("--loop", type=int, default=0)
     p_gif.add_argument("--palettesize", type=int, default=256)
     p_gif.add_argument("--subrectangles", action="store_true")
+    p_gif.add_argument(
+        "--min-frame-ms", type=int, default=100,
+        help="Clamp each frame's duration to at least N ms (cross-browser safe)"
+    )
+    p_gif.add_argument(
+        "--repeat-each", type=int, default=1,
+        help="Duplicate each frame N times to slow down further (larger file)"
+    )
 
-    # 新增 SVG 子命令（M4）
+    # ---- SVG ----
     p_svg = sub.add_parser("svg", help="Export a single frame as SVG")
-    p_svg.add_argument("demo")
+    p_svg.add_argument("demo", help="Python file that provides build() -> (Scene, Timeline)")
     p_svg.add_argument("--outfile", type=str, required=True)
     p_svg.add_argument("--size", type=str, default=None, help="WxH in px; omit to rely on viewBox only")
     p_svg.add_argument("--frame", type=str, default="last", help="'first'|'last'|index (0-based)")
@@ -103,13 +96,23 @@ def main(argv: list[str] | None = None) -> int:
         if ns.duration_scale != 1.0:
             tl = tl.scaled(ns.duration_scale)
         w, h = (int(x) for x in ns.size.lower().split("x"))
-        opts = GifOptions(size=(w, h), fps=ns.fps, loop=ns.loop,
-                          palettesize=ns.palettesize, subrectangles=bool(ns.subrectangles))
+        opts = GifOptions(
+            size=(w, h),
+            fps=ns.fps,
+            loop=ns.loop,
+            palettesize=ns.palettesize,
+            subrectangles=bool(ns.subrectangles),
+            min_frame_ms=ns.min_frame_ms,
+            repeat_each=max(1, ns.repeat_each),
+        )
         export_gif(scene, tl, ns.outfile, options=opts)
         return 0
 
     if ns.cmd == "svg":
+        # 惰性导入，避免无关子命令受影响
+        from .backends import export_svg, SvgOptions
         scene, tl = _load_demo_from_file(ns.demo)
+
         # 解析 frame 选择
         frame_sel = ns.frame.strip().lower()
         if frame_sel == "first":
@@ -118,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
             idx = -1
         else:
             idx = int(frame_sel)
+
         size = None
         if ns.size:
             w, h = (int(x) for x in ns.size.lower().split("x"))
