@@ -1,3 +1,4 @@
+#algoviz/backends/tui_rich.py
 from __future__ import annotations
 import sys
 import time

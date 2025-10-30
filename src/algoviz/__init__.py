@@ -1,3 +1,4 @@
+#algoviz/__init__.py
 """
 Algoviz-TUI
 Algorithm visualization: TUI realtime + GIF export + SVG static.
