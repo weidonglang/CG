@@ -118,7 +118,7 @@ tests/         # 单元与端到端测试（含 GIF/SVG 属性断言）
 
 ---
 
-## 🧭 路线图（可调整）
+## 🧭 路线图（暂停开发状态）
 
 | 版本    | 主要内容                                    | 交付                     |
 | ----- | --------------------------------------- | ---------------------- |
@@ -126,70 +126,4 @@ tests/         # 单元与端到端测试（含 GIF/SVG 属性断言）
 | 0.3.x | Graph + BFS Demo；Pointer；JSON 时间线（可阶段化） | 新组件与 demo、测试           |
 | 0.4.x | 主题与样式、APNG/MP4 导出（探索）                   | 新后端或格式适配               |
 
-> **SemVer 提示**：在 **0.y.z** 阶段一切都可能变化；1.0.0 才视为稳定公共 API。README/CHANGELOG 中需注明该事实。([Semantic Versioning][5])
-
 ---
-
-## 🧰 开发与质量
-
-### 代码规范
-
-* **Ruff**：超快的 Python linter/formatter，一套工具管住 Flake8/isort 等规则集，`pyproject.toml` 可集中配置。([docs.astral.sh][6])
-* **Black**：不可妥协的自动格式化（可选；如仅用 Ruff 也可）。([GitHub][7])
-* **mypy**：可选的静态类型检查（严格模式建议给 core 层）。
-
-### 测试与覆盖率
-
-```bash
-pytest -q                          # 运行全部测试
-pytest --cov=algoviz -q            # 带覆盖率
-```
-
-* 建议在 CI 使用 `pytest-cov` 并产出 XML 报告（便于徽章/阈值）。([pytest-cov.readthedocs.io][8])
-
----
-
-## 🖥️ 文档与站点
-
-* 文档基于 **MkDocs**（可选主题：mkdocs/readthedocs 或 Material 生态）
-  常用命令：
-
-  ```bash
-  mkdocs new docs-site
-  mkdocs serve         # 热更新预览
-  mkdocs build         # 生成静态站点到 site/
-  ```
-
-  主题与配置见官方指南。([mkdocs.org][2])
-
----
-
-## 🚀 发布（预案）
-
-* **CI**：三平台矩阵（Windows/Linux/macOS）+（Lint/Type/Unit/E2E）
-* **PyPI**：推荐 **Trusted Publishing**：
-
-  * 工作流中启用 `id-token: write`，用 `pypa/gh-action-pypi-publish@release/v1` 上传，无需保存 API Token。([docs.pypi.org][3])
-  * 结合 GitHub Environments 做更细粒度的发布保护（分支/Tag 规则）。([GitHub Docs][9])
-  * 新版 Action 默认产出 **PEP 740 数字佐证（attestations）**，供应链可信度更高。([GitHub][10])
-* **版本与变更**：
-
-  * 遵循 **SemVer**；
-  * 用 **Keep a Changelog** 模板维护 `CHANGELOG.md`（人读友好、分门别类：Added/Changed/Deprecated/Removed/Fixed/Security）。([keepachangelog.com][4])
-
----
-
-## 🙌 参与贡献
-
-1. Fork & 创建分支：`feat/xxx`
-2. `pip install -e ".[dev]"` 安装依赖
-3. 运行 `pytest -q` 确认本地全绿
-4. 遵循代码风格（Ruff/Black）、补充/更新测试
-5. 提交 PR，描述动机、设计要点与可视化快照（GIF/SVG）
-
----
-
-## 📃 许可证
-
-MIT（建议；若仓库尚未包含 LICENSE 文件，请添加）
-
