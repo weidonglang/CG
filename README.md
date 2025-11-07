@@ -1,4 +1,4 @@
-# Algoviz-TUI
+# Algoviz-TUI（暂停进一步开发状态）
 
 Python 算法动画库：**TUI 实时播放 + GIF 导出 + SVG 静态快照**
 
