@@ -69,7 +69,7 @@ python -m algoviz.cli svg demos/sort_bubble_full.py \
   --outfile snap.svg --frame last --size 640x360
 ```
 
-> 小贴士：若在无 GUI 的环境（CI/服务器）出现 Tk/Tcl 报错，请确保使用 **非交互图形后端**（如 Matplotlib 的 Agg），或在环境中显式设置。([matplotlib.org][1])
+> 小贴士：若在无 GUI 的环境（CI/服务器）出现 Tk/Tcl 报错，请确保使用 **非交互图形后端**（如 Matplotlib 的 Agg），或在环境中显式设置。
 
 ---
 
